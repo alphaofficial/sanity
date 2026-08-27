@@ -8,7 +8,6 @@ import tseslint from "typescript-eslint";
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join, relative } from "node:path";
-import { pathToFileURL } from "node:url";
 
 const repoRoot = process.env.SANITY_REPO_ROOT || process.cwd();
 const extensions = new Set([".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"]);
@@ -85,20 +84,41 @@ function ansi(text, code) {
   return `\u001B[${code}m${text}\u001B[0m`;
 }
 
-function shouldHyperlink() {
-  return process.env.FORCE_HYPERLINK !== undefined || process.stdout.isTTY;
+function statusLabel(message) {
+  return message.severity === 2 ? "ERROR" : "WARN";
 }
 
-function hyperlink(text, uri) {
-  if (!shouldHyperlink()) {
-    return text;
+function statusColor(message) {
+  return message.severity === 2 ? "196" : "214";
+}
+
+function conciseMessage(message) {
+  const rule = message.ruleId || "";
+  const text = message.message;
+
+  if (rule === "complexity") {
+    const match = text.match(/(?:method|function) '([^']+)' has a complexity of (\d+)\. Maximum allowed is (\d+)\./i);
+    if (match) {
+      return `${match[1]}() complexity is ${match[2]}; limit is ${match[3]}`;
+    }
   }
 
-  return `\u001B]8;;${uri}\u0007${text}\u001B]8;;\u0007`;
-}
+  if (rule === "max-lines-per-function") {
+    const match = text.match(/Function '([^']+)' has too many lines \((\d+)\)\. Maximum allowed is (\d+)\./i);
+    if (match) {
+      return `${match[1]}() is ${match[2]} lines; limit is ${match[3]}`;
+    }
+  }
 
-function fileLineUri(filePath, line, column) {
-  return `vscode://file/${filePath}:${line ?? 1}${column ? `:${column}` : ""}`;
+  if (rule === "sonarjs/assertions-in-tests") {
+    return "Test has no assertion";
+  }
+
+  if (rule === "sonarjs/no-fixed-wait-in-tests") {
+    return "Fixed wait should synchronize on an observable condition";
+  }
+
+  return text;
 }
 
 function readStdinBuffer() {
@@ -256,21 +276,21 @@ function eslintOptions(projectConfigPath) {
   return options;
 }
 
-function printIssue(message, locationWidth) {
-  const severity = message.severity === 2 ? "error" : "warning";
-  const color = message.severity === 2 ? "196" : "214";
-  const location = `${message.line ?? 0}:${message.column ?? 0}`.padEnd(locationWidth);
+function printIssue(message, displayPath) {
+  const severity = statusLabel(message);
+  const color = statusColor(message);
+  const location = `${displayPath}:${message.line ?? 0}:${message.column ?? 0}`;
   const rule = message.ruleId || "eslint";
-  const messageIndent = "        ";
+  const messageIndent = "         ";
   const wrapWidth = Math.max(48, Math.min(process.stdout.columns || 100, 120) - messageIndent.length);
-  const messageLines = wrapText(message.message, wrapWidth);
+  const messageLines = wrapText(conciseMessage(message), wrapWidth);
 
   process.stdout.write("  ");
-  process.stdout.write(ansi(location, "38;5;244"));
+  process.stdout.write(ansi(severity.padEnd(5), `1;38;5;${color}`));
   process.stdout.write("  ");
-  process.stdout.write(ansi(severity, `1;38;5;${color}`));
-  process.stdout.write(" ".repeat(9 - severity.length));
   process.stdout.write(ansi(rule, "1;38;5;252"));
+  process.stdout.write("  ");
+  process.stdout.write(ansi(location, "38;5;39"));
   process.stdout.write("\n");
 
   for (const line of messageLines) {
@@ -284,6 +304,7 @@ function printResults(results, checkedCount) {
   let filesWithIssues = 0;
   let errorCount = 0;
   let warningCount = 0;
+  let issueCount = 0;
 
   let printedFile = false;
 
@@ -294,37 +315,36 @@ function printResults(results, checkedCount) {
     filesWithIssues += 1;
     errorCount += result.errorCount;
     warningCount += result.warningCount;
+    issueCount += messages.length;
 
-    const firstMessage = messages[0];
     const displayPath = relative(repoRoot, result.filePath) || result.filePath;
-    const displayLink = `${displayPath}:${firstMessage.line ?? 1}:${firstMessage.column ?? 1}`;
-    const locationWidth = Math.max(...messages.map(message => `${message.line ?? 0}:${message.column ?? 0}`.length));
 
     if (printedFile) {
       process.stdout.write("\n");
     }
 
-    process.stdout.write(`${hyperlink(ansi(displayLink, "1;38;5;39"), fileLineUri(result.filePath, firstMessage.line, firstMessage.column))}\n`);
+    process.stdout.write(`${ansi(displayPath, "1;38;5;39")}\n`);
     for (const [index, message] of messages.entries()) {
       if (index > 0) {
         process.stdout.write("\n");
       }
-      printIssue(message, locationWidth);
+      printIssue(message, displayPath);
     }
     printedFile = true;
   }
 
-  const summary = [
-    ansi(`Checked ${checkedCount} ${checkedCount === 1 ? "file" : "files"}`, "1;38;5;252"),
-    ansi(`${filesWithIssues} ${filesWithIssues === 1 ? "file" : "files"} with issues`, "1;38;5;252"),
-    ansi(`${errorCount} ${errorCount === 1 ? "error" : "errors"}`, errorCount > 0 ? "1;38;5;196" : "1;38;5;252"),
-    ansi(`${warningCount} ${warningCount === 1 ? "warning" : "warnings"}`, warningCount > 0 ? "1;38;5;214" : "1;38;5;252")
-  ].join("\n");
-
   if (printedFile) {
     process.stdout.write("\n");
   }
-  process.stdout.write(`${summary}\n`);
+
+  const status = errorCount > 0 ? "FAIL" : warningCount > 0 ? "WARN" : "PASS";
+  const statusColorCode = errorCount > 0 ? "196" : warningCount > 0 ? "214" : "34";
+
+  process.stdout.write(`${ansi("Summary", "1;38;5;252")}\n`);
+  process.stdout.write(`  ${ansi("Status  ", "38;5;245")} ${ansi(status, `1;38;5;${statusColorCode}`)}\n`);
+  process.stdout.write(`  ${ansi("Errors  ", "38;5;245")} ${ansi(String(errorCount), errorCount > 0 ? "1;38;5;196" : "38;5;245")}\n`);
+  process.stdout.write(`  ${ansi("Warnings", "38;5;245")} ${ansi(String(warningCount), warningCount > 0 ? "1;38;5;214" : "38;5;245")}\n`);
+  process.stdout.write(`  ${ansi("Files   ", "38;5;245")} ${ansi(`${filesWithIssues} affected / ${checkedCount} checked`, "1;38;5;252")}\n`);
 }
 
 function printFatal(error) {
