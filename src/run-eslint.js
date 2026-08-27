@@ -9,9 +9,12 @@ import tseslint from "typescript-eslint";
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join, relative } from "node:path";
-import { pathToFileURL } from "node:url";
 
 const repoRoot = process.env.SANITY_REPO_ROOT || process.cwd();
+const jsonOutput = process.env.SANITY_JSON === "1";
+const colors = createColors({
+  force: process.env.FORCE_COLOR !== undefined || (process.env.NO_COLOR === undefined && process.stdout.isTTY)
+});
 const extensions = new Set([".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"]);
 const fallbackIgnores = ["**/node_modules/**", "**/dist/**", "**/build/**", "**/coverage/**", "**/.next/**"];
 const configFiles = [
@@ -96,20 +99,12 @@ function ansi(text, code) {
   }
 }
 
-function shouldHyperlink() {
-  return process.env.FORCE_HYPERLINK !== undefined || process.stdout.isTTY;
+function statusLabel(message) {
+  return message.severity === 2 ? "×" : "!";
 }
 
-function hyperlink(text, uri) {
-  if (!shouldHyperlink()) {
-    return text;
-  }
-
-  return `\u001B]8;;${uri}\u0007${text}\u001B]8;;\u0007`;
-}
-
-function fileLineUri(filePath, line, column) {
-  return `vscode://file/${filePath}:${line ?? 1}${column ? `:${column}` : ""}`;
+function statusColor(message) {
+  return message.severity === 2 ? "196" : "214";
 }
 
 function readStdinBuffer() {
@@ -267,21 +262,21 @@ function eslintOptions(projectConfigPath) {
   return options;
 }
 
-function printIssue(message, locationWidth) {
-  const severity = message.severity === 2 ? "error" : "warning";
-  const color = message.severity === 2 ? "196" : "214";
-  const location = `${message.line ?? 0}:${message.column ?? 0}`.padEnd(locationWidth);
+function printIssue(message, displayPath) {
+  const severity = statusLabel(message);
+  const color = statusColor(message);
+  const location = `${displayPath}:${message.line ?? 0}:${message.column ?? 0}`;
   const rule = message.ruleId || "eslint";
-  const messageIndent = "        ";
+  const messageIndent = "     ";
   const wrapWidth = Math.max(48, Math.min(process.stdout.columns || 100, 120) - messageIndent.length);
   const messageLines = wrapText(message.message, wrapWidth);
 
-  process.stdout.write("  ");
-  process.stdout.write(ansi(location, "38;5;244"));
-  process.stdout.write("  ");
+  process.stdout.write("   ");
   process.stdout.write(ansi(severity, `1;38;5;${color}`));
-  process.stdout.write(" ".repeat(9 - severity.length));
+  process.stdout.write(" ");
   process.stdout.write(ansi(rule, "1;38;5;252"));
+  process.stdout.write("  ");
+  process.stdout.write(ansi(location, "38;5;39"));
   process.stdout.write("\n");
 
   for (const line of messageLines) {
@@ -302,6 +297,7 @@ function printResults(results, checkedCount) {
   let filesWithIssues = 0;
   let errorCount = 0;
   let warningCount = 0;
+  let issueCount = 0;
 
   let printedFile = false;
 
@@ -312,42 +308,70 @@ function printResults(results, checkedCount) {
     filesWithIssues += 1;
     errorCount += result.errorCount;
     warningCount += result.warningCount;
+    issueCount += messages.length;
 
-    const firstMessage = messages[0];
     const displayPath = relative(repoRoot, result.filePath) || result.filePath;
-    const displayLink = `${displayPath}:${firstMessage.line ?? 1}:${firstMessage.column ?? 1}`;
-    const locationWidth = Math.max(...messages.map(message => `${message.line ?? 0}:${message.column ?? 0}`.length));
+    const fileErrorCount = messages.filter(message => message.severity === 2).length;
+    const fileWarningCount = messages.filter(message => message.severity === 1).length;
+    const fileStatus = fileErrorCount > 0 ? "❯" : "!";
+    const fileStatusColor = fileErrorCount > 0 ? "196" : "214";
+    const fileSummary = [
+      countPart(messages.length, "issue", "252"),
+      fileErrorCount > 0 ? countPart(fileErrorCount, "error", "196") : undefined,
+      fileWarningCount > 0 ? countPart(fileWarningCount, "warning", "214") : undefined
+    ].filter(Boolean).join(ansi(" | ", "38;5;240"));
 
     if (printedFile) {
       process.stdout.write("\n");
     }
 
-    process.stdout.write(`${hyperlink(ansi(displayLink, "1;38;5;39"), fileLineUri(result.filePath, firstMessage.line, firstMessage.column))}\n`);
+    process.stdout.write(`${ansi(fileStatus, `1;38;5;${fileStatusColor}`)} ${ansi(displayPath, "1;38;5;39")} ${ansi("(", "38;5;245")}${fileSummary}${ansi(")", "38;5;245")}\n`);
     for (const [index, message] of messages.entries()) {
       if (index > 0) {
         process.stdout.write("");
       }
-      printIssue(message, locationWidth);
+      printIssue(message, displayPath);
     }
     printedFile = true;
   }
 
-  const summary = [
-    ansi(`Checked ${checkedCount} ${checkedCount === 1 ? "file" : "files"}`, "1;38;5;252"),
-    ansi(`${filesWithIssues} ${filesWithIssues === 1 ? "file" : "files"} with issues`, "1;38;5;252"),
-    ansi(`${errorCount} ${errorCount === 1 ? "error" : "errors"}`, errorCount > 0 ? "1;38;5;196" : "1;38;5;252"),
-    ansi(`${warningCount} ${warningCount === 1 ? "warning" : "warnings"}`, warningCount > 0 ? "1;38;5;214" : "1;38;5;252")
-  ].join("\n");
-
   if (printedFile) {
     process.stdout.write("\n");
   }
-  process.stdout.write(`${summary}\n`);
+
+  const status = errorCount > 0 ? "FAIL" : warningCount > 0 ? "WARN" : "PASS";
+  const statusColorCode = errorCount > 0 ? "196" : warningCount > 0 ? "214" : "34";
+  const cleanFiles = checkedCount - filesWithIssues;
+
+  process.stdout.write(`${ansi(status, `1;38;5;${statusColorCode}`)}\n\n`);
+  process.stdout.write(
+    ` ${ansi("Lint Files", "1;38;5;252")}  ${ansi(`${filesWithIssues} failed`, filesWithIssues > 0 ? "1;38;5;196" : "38;5;245")}${ansi(
+      " | ",
+      "38;5;240"
+    )}${ansi(`${cleanFiles} passed`, cleanFiles > 0 ? "1;38;5;34" : "38;5;245")} ${ansi(`(${checkedCount})`, "38;5;245")}\n`
+  );
+  process.stdout.write(
+    `     ${ansi("Issues", "1;38;5;252")}  ${ansi(
+      `${errorCount} ${errorCount === 1 ? "error" : "errors"}`,
+      errorCount > 0 ? "1;38;5;196" : "38;5;245"
+    )}${ansi(" | ", "38;5;240")}${ansi(
+      `${warningCount} ${warningCount === 1 ? "warning" : "warnings"}`,
+      warningCount > 0 ? "1;38;5;214" : "38;5;245"
+    )} ${ansi(
+      `(${issueCount})`,
+      "38;5;245"
+    )}\n`
+  );
 }
 
 function printFatal(error) {
-  style("Fatal error\n", "--foreground", "196", "--bold");
   const message = error && typeof error.message === "string" ? error.message : String(error);
+  if (jsonOutput) {
+    process.stdout.write(`${JSON.stringify({ fatal: true, message }, null, 2)}\n`);
+    return;
+  }
+
+  style("Fatal error\n", "--foreground", "196", "--bold");
   style(`${message}\n`, "--foreground", "252");
 }
 
@@ -359,25 +383,37 @@ async function main() {
 
   const files = parseNulPaths(await readStdinBuffer());
   if (files.length === 0) {
-    style("No JavaScript or TypeScript files to check.\n", "--foreground", "34", "--bold");
+    if (jsonOutput) {
+      process.stdout.write("[]\n");
+    } else {
+      style("No JavaScript or TypeScript files to check.\n", "--foreground", "34", "--bold");
+    }
     return 0;
   }
 
   const projectConfigPath = findFlatConfig();
   const projectHasFlatConfig = Boolean(projectConfigPath);
   if (!projectHasFlatConfig && hasLegacyConfig()) {
-    style("Legacy ESLint config detected\n", "--foreground", "214", "--bold");
-    style(
-      "This project uses eslintrc configuration. ESLint flat config compatibility is not enabled here, so sanity will run its standalone checks only.\n\n",
-      "--foreground",
-      "252"
-    );
+    if (!jsonOutput) {
+      style("Legacy ESLint config detected\n", "--foreground", "214", "--bold");
+      style(
+        "This project uses eslintrc configuration. ESLint flat config compatibility is not enabled here, so sanity will run its standalone checks only.\n\n",
+        "--foreground",
+        "252"
+      );
+    }
   }
 
   const eslint = new ESLint(eslintOptions(projectConfigPath));
   const results = await eslint.lintFiles(files);
   const formatter = await eslint.loadFormatter("json");
   const formattedResults = JSON.parse(await formatter.format(results));
+
+  if (jsonOutput) {
+    process.stdout.write(`${JSON.stringify(formattedResults, null, 2)}\n`);
+    return formattedResults.some(result => result.errorCount > 0) ? 1 : 0;
+  }
+
   printResults(formattedResults, formattedResults.length);
 
   return formattedResults.some(result => result.errorCount > 0) ? 1 : 0;
