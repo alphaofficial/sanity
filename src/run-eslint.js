@@ -9,6 +9,7 @@ import tseslint from "typescript-eslint";
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join, relative } from "node:path";
+import codeComplete from "./vendor/code-complete/index.js";
 
 const repoRoot = process.env.SANITY_REPO_ROOT || process.cwd();
 const jsonOutput = process.env.SANITY_JSON === "1";
@@ -75,6 +76,15 @@ function wrapText(text, width) {
   }
 
   return lines.length > 0 ? lines : [text];
+}
+
+function wrapMessage(text, width) {
+  return text
+    .split(/\r?\n/)
+    .flatMap(line => {
+      const trimmed = line.trim();
+      return trimmed.length > 0 ? wrapText(trimmed, width) : [""];
+    });
 }
 
 function ansi(text, code) {
@@ -180,6 +190,7 @@ function sanityConfig(projectHasFlatConfig) {
       languageOptions: baseLanguageOptions,
       plugins: {
         "import-x": importX,
+        "sanity-code-complete": codeComplete,
         sonarjs,
         unicorn
       },
@@ -200,6 +211,12 @@ function sanityConfig(projectHasFlatConfig) {
         "no-nested-ternary": "warn",
         "import-x/first": "warn",
         "import-x/no-duplicates": "warn",
+        "sanity-code-complete/enforce-meaningful-names": "warn",
+        "sanity-code-complete/high-import-coupling": "warn",
+        "sanity-code-complete/no-boolean-params": "warn",
+        "sanity-code-complete/no-complex-conditionals": "warn",
+        "sanity-code-complete/no-late-argument-usage": "warn",
+        "sanity-code-complete/prefer-early-return": "warn",
         "sonarjs/cognitive-complexity": ["warn", 15],
         "unicorn/consistent-function-scoping": "warn",
         "unicorn/explicit-length-check": "warn",
@@ -269,7 +286,7 @@ function printIssue(message, displayPath) {
   const rule = message.ruleId || "eslint";
   const messageIndent = "     ";
   const wrapWidth = Math.max(48, Math.min(process.stdout.columns || 100, 120) - messageIndent.length);
-  const messageLines = wrapText(message.message, wrapWidth);
+  const messageLines = wrapMessage(message.message, wrapWidth);
 
   process.stdout.write("   ");
   process.stdout.write(ansi(severity, `1;38;5;${color}`));
@@ -279,9 +296,9 @@ function printIssue(message, displayPath) {
   process.stdout.write(ansi(location, "38;5;39"));
   process.stdout.write("\n");
 
-  for (const line of messageLines) {
+  for (const [index, line] of messageLines.entries()) {
     process.stdout.write(messageIndent);
-    process.stdout.write(ansi("→", "38;5;245"));
+    process.stdout.write(ansi(index === 0 ? "→" : " ", "38;5;245"));
     process.stdout.write(" ");
     process.stdout.write(ansi(line, "38;5;245"));
     process.stdout.write("\n");
@@ -345,10 +362,10 @@ function printResults(results, checkedCount) {
 
   process.stdout.write(`${ansi(status, `1;38;5;${statusColorCode}`)}\n\n`);
   process.stdout.write(
-    ` ${ansi("Lint Files", "1;38;5;252")}  ${ansi(`${filesWithIssues} failed`, filesWithIssues > 0 ? "1;38;5;196" : "38;5;245")}${ansi(
+    ` ${ansi("Lint Files", "1;38;5;252")}  ${ansi(`${filesWithIssues} with issues`, filesWithIssues > 0 ? "1;38;5;196" : "38;5;245")}${ansi(
       " | ",
       "38;5;240"
-    )}${ansi(`${cleanFiles} passed`, cleanFiles > 0 ? "1;38;5;34" : "38;5;245")} ${ansi(`(${checkedCount})`, "38;5;245")}\n`
+    )}${ansi(`${cleanFiles} clean`, cleanFiles > 0 ? "1;38;5;34" : "38;5;245")} ${ansi(`(${checkedCount})`, "38;5;245")}\n`
   );
   process.stdout.write(
     `     ${ansi("Issues", "1;38;5;252")}  ${ansi(
