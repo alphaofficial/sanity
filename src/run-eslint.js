@@ -4,6 +4,7 @@ import { ESLint } from "eslint";
 import importX from "eslint-plugin-import-x";
 import sonarjs from "eslint-plugin-sonarjs";
 import unicorn from "eslint-plugin-unicorn";
+import { createColors } from "tinyrainbow";
 import tseslint from "typescript-eslint";
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -73,16 +74,26 @@ function wrapText(text, width) {
   return lines.length > 0 ? lines : [text];
 }
 
-function shouldColor() {
-  return process.env.FORCE_COLOR !== undefined || (process.env.NO_COLOR === undefined && process.stdout.isTTY);
-}
-
 function ansi(text, code) {
-  if (!shouldColor()) {
-    return text;
+  switch (code) {
+    case "1;38;5;34":
+      return colors.bold(colors.green(text));
+    case "1;38;5;39":
+      return colors.bold(colors.cyan(text));
+    case "1;38;5;196":
+      return colors.bold(colors.red(text));
+    case "1;38;5;214":
+      return colors.bold(colors.yellow(text));
+    case "1;38;5;252":
+      return colors.bold(colors.white(text));
+    case "38;5;39":
+      return colors.cyan(text);
+    case "38;5;240":
+    case "38;5;245":
+      return colors.gray(text);
+    default:
+      return text;
   }
-
-  return `\u001B[${code}m${text}\u001B[0m`;
 }
 
 function shouldHyperlink() {
@@ -275,9 +286,16 @@ function printIssue(message, locationWidth) {
 
   for (const line of messageLines) {
     process.stdout.write(messageIndent);
+    process.stdout.write(ansi("→", "38;5;245"));
+    process.stdout.write(" ");
     process.stdout.write(ansi(line, "38;5;245"));
     process.stdout.write("\n");
   }
+}
+
+function countPart(count, singular, colorCode) {
+  const label = count === 1 ? singular : `${singular}s`;
+  return ansi(`${count} ${label}`, count > 0 ? `1;38;5;${colorCode}` : "38;5;245");
 }
 
 function printResults(results, checkedCount) {
@@ -307,7 +325,7 @@ function printResults(results, checkedCount) {
     process.stdout.write(`${hyperlink(ansi(displayLink, "1;38;5;39"), fileLineUri(result.filePath, firstMessage.line, firstMessage.column))}\n`);
     for (const [index, message] of messages.entries()) {
       if (index > 0) {
-        process.stdout.write("\n");
+        process.stdout.write("");
       }
       printIssue(message, locationWidth);
     }
