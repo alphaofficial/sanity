@@ -55,6 +55,7 @@ By default, it checks files staged in the Git index. This makes it suitable for 
 - `--staged` checks staged files and is the default.
 - `--changed` checks tracked files changed in the working tree but not yet staged.
 - `--json` writes ESLint's machine-readable JSON results and does not require Gum.
+- `--clipboard` copies the printed output to the system clipboard.
 - `--help` prints command help.
 
 Examples:
@@ -63,6 +64,8 @@ Examples:
 sanity --changed
 sanity --json
 sanity --changed --json
+sanity --clipboard
+sanity --json --clipboard
 ```
 
 The command exits with `0` when there are no lint errors, `1` when lint errors are found, and `2` for usage, dependency, configuration, or execution failures. Warnings are reported but do not produce a failing exit status.

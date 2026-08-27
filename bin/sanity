@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: sanity [--staged|--changed] [--json] [--help]
+Usage: sanity [--staged|--changed] [--json] [--clipboard] [--help]
 
 Lint staged JavaScript and TypeScript files in the current Git repository.
 
@@ -11,12 +11,15 @@ Options:
   --staged   Lint staged files. This is the default.
   --changed  Lint tracked files changed in the working tree.
   --json     Print ESLint JSON formatter output.
+  --clipboard
+             Copy the printed output to the system clipboard.
   --help     Show this help.
 USAGE
 }
 
 mode="staged"
 json="0"
+clipboard="0"
 
 while (($#)); do
   case "$1" in
@@ -28,6 +31,9 @@ while (($#)); do
       ;;
     --json)
       json="1"
+      ;;
+    --clipboard)
+      clipboard="1"
       ;;
     --help|-h)
       usage
@@ -42,6 +48,34 @@ while (($#)); do
   shift
 done
 
+copy_to_clipboard() {
+  if command -v pbcopy >/dev/null 2>&1; then
+    pbcopy
+  elif command -v wl-copy >/dev/null 2>&1; then
+    wl-copy
+  elif command -v xclip >/dev/null 2>&1; then
+    xclip -selection clipboard
+  elif command -v xsel >/dev/null 2>&1; then
+    xsel --clipboard --input
+  elif command -v clip.exe >/dev/null 2>&1; then
+    clip.exe
+  else
+    return 1
+  fi
+}
+
+print_and_maybe_copy() {
+  local output="$1"
+
+  printf '%s\n' "$output"
+
+  if [[ "$clipboard" == "1" ]]; then
+    if ! printf '%s\n' "$output" | copy_to_clipboard; then
+      printf 'sanity could not find a supported clipboard command.\n' >&2
+    fi
+  fi
+}
+
 if [[ "$json" != "1" ]] && ! command -v gum >/dev/null 2>&1; then
   printf 'sanity requires Gum for terminal output: https://github.com/charmbracelet/gum\n' >&2
   exit 2
@@ -49,10 +83,10 @@ fi
 
 if ! repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
   if [[ "$json" == "1" ]]; then
-    printf '{"fatal":true,"message":"sanity must be run from inside a Git repository."}\n'
+    print_and_maybe_copy '{"fatal":true,"message":"sanity must be run from inside a Git repository."}'
   else
-    gum style --foreground 196 --bold "Fatal error"
-    gum style "sanity must be run from inside a Git repository."
+    output="$(gum style --foreground 196 --bold "Fatal error"; gum style "sanity must be run from inside a Git repository.")"
+    print_and_maybe_copy "$output"
   fi
   exit 2
 fi
@@ -96,11 +130,26 @@ done < <(git -C "$repo_root" "${git_args[@]}")
 
 if [[ ! -s "$tmp_files" ]]; then
   if [[ "$json" == "1" ]]; then
-    printf '[]\n'
+    print_and_maybe_copy '[]'
   else
-    gum style --foreground 34 --bold "No JavaScript or TypeScript files to check."
+    output="$(gum style --foreground 34 --bold "No JavaScript or TypeScript files to check.")"
+    print_and_maybe_copy "$output"
   fi
   exit 0
+fi
+
+if [[ "$clipboard" == "1" ]]; then
+  set +e
+  output="$(SANITY_REPO_ROOT="$repo_root" SANITY_MODE="$mode" SANITY_JSON="$json" node "$runner" <"$tmp_files")"
+  status=$?
+  clipboard_output="$(env -u FORCE_COLOR NO_COLOR=1 SANITY_REPO_ROOT="$repo_root" SANITY_MODE="$mode" SANITY_JSON="$json" node "$runner" <"$tmp_files")"
+  set -e
+
+  printf '%s\n' "$output"
+  if ! printf '%s\n' "$clipboard_output" | copy_to_clipboard; then
+    printf 'sanity could not find a supported clipboard command.\n' >&2
+  fi
+  exit "$status"
 fi
 
 SANITY_REPO_ROOT="$repo_root" SANITY_MODE="$mode" SANITY_JSON="$json" node "$runner" <"$tmp_files"
