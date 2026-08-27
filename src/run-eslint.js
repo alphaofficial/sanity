@@ -10,6 +10,7 @@ import { existsSync } from "node:fs";
 import { join, relative } from "node:path";
 
 const repoRoot = process.env.SANITY_REPO_ROOT || process.cwd();
+const jsonOutput = process.env.SANITY_JSON === "1";
 const extensions = new Set([".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"]);
 const fallbackIgnores = ["**/node_modules/**", "**/dist/**", "**/build/**", "**/coverage/**", "**/.next/**"];
 const configFiles = [
@@ -348,8 +349,13 @@ function printResults(results, checkedCount) {
 }
 
 function printFatal(error) {
-  style("Fatal error\n", "--foreground", "196", "--bold");
   const message = error && typeof error.message === "string" ? error.message : String(error);
+  if (jsonOutput) {
+    process.stdout.write(`${JSON.stringify({ fatal: true, message })}\n`);
+    return;
+  }
+
+  style("Fatal error\n", "--foreground", "196", "--bold");
   style(`${message}\n`, "--foreground", "252");
 }
 
@@ -361,25 +367,38 @@ async function main() {
 
   const files = parseNulPaths(await readStdinBuffer());
   if (files.length === 0) {
-    style("No JavaScript or TypeScript files to check.\n", "--foreground", "34", "--bold");
+    if (jsonOutput) {
+      process.stdout.write("[]\n");
+    } else {
+      style("No JavaScript or TypeScript files to check.\n", "--foreground", "34", "--bold");
+    }
     return 0;
   }
 
   const projectConfigPath = findFlatConfig();
   const projectHasFlatConfig = Boolean(projectConfigPath);
   if (!projectHasFlatConfig && hasLegacyConfig()) {
-    style("Legacy ESLint config detected\n", "--foreground", "214", "--bold");
-    style(
-      "This project uses eslintrc configuration. ESLint flat config compatibility is not enabled here, so sanity will run its standalone checks only.\n\n",
-      "--foreground",
-      "252"
-    );
+    if (!jsonOutput) {
+      style("Legacy ESLint config detected\n", "--foreground", "214", "--bold");
+      style(
+        "This project uses eslintrc configuration. ESLint flat config compatibility is not enabled here, so sanity will run its standalone checks only.\n\n",
+        "--foreground",
+        "252"
+      );
+    }
   }
 
   const eslint = new ESLint(eslintOptions(projectConfigPath));
   const results = await eslint.lintFiles(files);
   const formatter = await eslint.loadFormatter("json");
-  const formattedResults = JSON.parse(await formatter.format(results));
+  const json = await formatter.format(results);
+  const formattedResults = JSON.parse(json);
+
+  if (jsonOutput) {
+    process.stdout.write(`${JSON.stringify(formattedResults, null, 2)}\n`);
+    return formattedResults.some(result => result.errorCount > 0) ? 1 : 0;
+  }
+
   printResults(formattedResults, formattedResults.length);
 
   return formattedResults.some(result => result.errorCount > 0) ? 1 : 0;

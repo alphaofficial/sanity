@@ -70,6 +70,18 @@ To check tracked files changed in the working tree:
 sanity --changed
 ```
 
+To print machine-readable ESLint JSON:
+
+```bash
+sanity --json
+```
+
+This can be combined with changed-file mode:
+
+```bash
+sanity --changed --json
+```
+
 Supported files:
 
 - `.js`

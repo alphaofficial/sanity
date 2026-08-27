@@ -3,18 +3,20 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: sanity [--staged|--changed] [--help]
+Usage: sanity [--staged|--changed] [--json] [--help]
 
 Lint staged JavaScript and TypeScript files in the current Git repository.
 
 Options:
   --staged   Lint staged files. This is the default.
   --changed  Lint tracked files changed in the working tree.
+  --json     Print ESLint JSON formatter output.
   --help     Show this help.
 USAGE
 }
 
 mode="staged"
+json="0"
 
 while (($#)); do
   case "$1" in
@@ -23,6 +25,9 @@ while (($#)); do
       ;;
     --changed|--tracked)
       mode="changed"
+      ;;
+    --json)
+      json="1"
       ;;
     --help|-h)
       usage
@@ -37,14 +42,18 @@ while (($#)); do
   shift
 done
 
-if ! command -v gum >/dev/null 2>&1; then
+if [[ "$json" != "1" ]] && ! command -v gum >/dev/null 2>&1; then
   printf 'sanity requires Gum for terminal output: https://github.com/charmbracelet/gum\n' >&2
   exit 2
 fi
 
 if ! repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-  gum style --foreground 196 --bold "Fatal error"
-  gum style "sanity must be run from inside a Git repository."
+  if [[ "$json" == "1" ]]; then
+    printf '{"fatal":true,"message":"sanity must be run from inside a Git repository."}\n'
+  else
+    gum style --foreground 196 --bold "Fatal error"
+    gum style "sanity must be run from inside a Git repository."
+  fi
   exit 2
 fi
 
@@ -86,8 +95,12 @@ while IFS= read -r -d '' path; do
 done < <(git -C "$repo_root" "${git_args[@]}")
 
 if [[ ! -s "$tmp_files" ]]; then
-  gum style --foreground 34 --bold "No JavaScript or TypeScript files to check."
+  if [[ "$json" == "1" ]]; then
+    printf '[]\n'
+  else
+    gum style --foreground 34 --bold "No JavaScript or TypeScript files to check."
+  fi
   exit 0
 fi
 
-SANITY_REPO_ROOT="$repo_root" SANITY_MODE="$mode" node "$runner" <"$tmp_files"
+SANITY_REPO_ROOT="$repo_root" SANITY_MODE="$mode" SANITY_JSON="$json" node "$runner" <"$tmp_files"
