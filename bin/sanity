@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: sanity [--staged|--changed] [--help]
+
+Lint staged JavaScript and TypeScript files in the current Git repository.
+
+Options:
+  --staged   Lint staged files. This is the default.
+  --changed  Lint tracked files changed in the working tree.
+  --help     Show this help.
+USAGE
+}
+
+mode="staged"
+
+while (($#)); do
+  case "$1" in
+    --staged)
+      mode="staged"
+      ;;
+    --changed|--tracked)
+      mode="changed"
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      printf 'Unknown option: %s\n\n' "$1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+if ! command -v gum >/dev/null 2>&1; then
+  printf 'sanity requires Gum for terminal output: https://github.com/charmbracelet/gum\n' >&2
+  exit 2
+fi
+
+if ! repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+  gum style --foreground 196 --bold "Fatal error"
+  gum style "sanity must be run from inside a Git repository."
+  exit 2
+fi
+
+source_path="${BASH_SOURCE[0]}"
+while [[ -L "$source_path" ]]; do
+  source_dir="$(cd -P -- "$(dirname -- "$source_path")" && pwd)"
+  link_target="$(readlink "$source_path")"
+  if [[ "$link_target" == /* ]]; then
+    source_path="$link_target"
+  else
+    source_path="$source_dir/$link_target"
+  fi
+done
+
+script_dir="$(cd -P -- "$(dirname -- "$source_path")" && pwd)"
+runner="$script_dir/../src/run-eslint.js"
+
+declare -a git_args
+case "$mode" in
+  staged)
+    git_args=(diff --cached --name-only -z --diff-filter=ACMR)
+    ;;
+  changed)
+    git_args=(diff --name-only -z --diff-filter=ACMR)
+    ;;
+esac
+
+tmp_files="$(mktemp)"
+trap 'rm -f "$tmp_files"' EXIT
+
+while IFS= read -r -d '' path; do
+  case "$path" in
+    *.js|*.jsx|*.mjs|*.cjs|*.ts|*.tsx|*.mts|*.cts)
+      if [[ -f "$repo_root/$path" ]]; then
+        printf '%s\0' "$path" >>"$tmp_files"
+      fi
+      ;;
+  esac
+done < <(git -C "$repo_root" "${git_args[@]}")
+
+if [[ ! -s "$tmp_files" ]]; then
+  gum style --foreground 34 --bold "No JavaScript or TypeScript files to check."
+  exit 0
+fi
+
+SANITY_REPO_ROOT="$repo_root" SANITY_MODE="$mode" node "$runner" <"$tmp_files"
