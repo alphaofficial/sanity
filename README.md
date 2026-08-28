@@ -54,6 +54,8 @@ By default, it checks files staged in the Git index. This makes it suitable for 
 
 - `--staged` checks staged files and is the default.
 - `--changed` checks tracked files changed in the working tree but not yet staged.
+- `--branch` checks files changed on the current branch since it forked from the repository's default branch.
+- `--branch <base-ref>` checks files changed on the current branch since it forked from a specific base ref.
 - `--json` writes ESLint's machine-readable JSON results and does not require Gum.
 - `--clipboard` copies the printed output to the system clipboard.
 - `--help` prints command help.
@@ -62,8 +64,11 @@ Examples:
 
 ```bash
 sanity --changed
+sanity --branch
+sanity --branch main
 sanity --json
 sanity --changed --json
+sanity --branch --json
 sanity --clipboard
 sanity --json --clipboard
 ```

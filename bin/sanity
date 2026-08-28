@@ -3,13 +3,16 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: sanity [--staged|--changed] [--json] [--clipboard] [--help]
+Usage: sanity [--staged|--changed|--branch [base-ref]] [--json] [--clipboard] [--help]
 
-Lint staged JavaScript and TypeScript files in the current Git repository.
+Lint JavaScript and TypeScript changes in the current Git repository.
 
 Options:
   --staged   Lint staged files. This is the default.
   --changed  Lint tracked files changed in the working tree.
+  --branch [base-ref]
+             Lint files changed on the current branch since it forked from
+             base-ref. Defaults to the repository's default branch.
   --json     Print ESLint JSON formatter output.
   --clipboard
              Copy the printed output to the system clipboard.
@@ -18,6 +21,7 @@ USAGE
 }
 
 mode="staged"
+branch_base=""
 json="0"
 clipboard="0"
 
@@ -28,6 +32,22 @@ while (($#)); do
       ;;
     --changed|--tracked)
       mode="changed"
+      ;;
+    --branch)
+      mode="branch"
+      if [[ "${2:-}" != "" && "${2:0:1}" != "-" ]]; then
+        branch_base="$2"
+        shift
+      fi
+      ;;
+    --branch=*)
+      mode="branch"
+      branch_base="${1#--branch=}"
+      if [[ "$branch_base" == "" ]]; then
+        printf 'Missing branch base ref after --branch=.\n\n' >&2
+        usage >&2
+        exit 2
+      fi
       ;;
     --json)
       json="1"
@@ -76,19 +96,25 @@ print_and_maybe_copy() {
   fi
 }
 
+fatal() {
+  local message="$1"
+
+  if [[ "$json" == "1" ]]; then
+    print_and_maybe_copy "$(printf '{"fatal":true,"message":%s}' "$(node -e 'process.stdout.write(JSON.stringify(process.argv[1]))' "$message")")"
+  else
+    output="$(gum style --foreground 196 --bold "Fatal error"; gum style "$message")"
+    print_and_maybe_copy "$output"
+  fi
+  exit 2
+}
+
 if [[ "$json" != "1" ]] && ! command -v gum >/dev/null 2>&1; then
   printf 'sanity requires Gum for terminal output: https://github.com/charmbracelet/gum\n' >&2
   exit 2
 fi
 
 if ! repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-  if [[ "$json" == "1" ]]; then
-    print_and_maybe_copy '{"fatal":true,"message":"sanity must be run from inside a Git repository."}'
-  else
-    output="$(gum style --foreground 196 --bold "Fatal error"; gum style "sanity must be run from inside a Git repository.")"
-    print_and_maybe_copy "$output"
-  fi
-  exit 2
+  fatal "sanity must be run from inside a Git repository."
 fi
 
 source_path="${BASH_SOURCE[0]}"
@@ -105,6 +131,24 @@ done
 script_dir="$(cd -P -- "$(dirname -- "$source_path")" && pwd)"
 runner="$script_dir/../src/run-eslint.js"
 
+detect_default_branch() {
+  local remote_head candidate
+
+  if remote_head="$(git -C "$repo_root" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)"; then
+    printf '%s\n' "$remote_head"
+    return 0
+  fi
+
+  for candidate in origin/main origin/master main master; do
+    if git -C "$repo_root" rev-parse --verify --quiet "$candidate^{commit}" >/dev/null; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 declare -a git_args
 case "$mode" in
   staged)
@@ -112,6 +156,23 @@ case "$mode" in
     ;;
   changed)
     git_args=(diff --name-only -z --diff-filter=ACMR)
+    ;;
+  branch)
+    if [[ "$branch_base" == "" ]]; then
+      if ! branch_base="$(detect_default_branch)"; then
+        fatal "sanity could not detect a default branch. Pass one explicitly, for example: sanity --branch main"
+      fi
+    fi
+
+    if ! git -C "$repo_root" rev-parse --verify --quiet "$branch_base^{commit}" >/dev/null; then
+      fatal "Branch base ref '$branch_base' does not exist."
+    fi
+
+    if ! git -C "$repo_root" merge-base "$branch_base" HEAD >/dev/null; then
+      fatal "Branch base ref '$branch_base' has no merge base with HEAD."
+    fi
+
+    git_args=(diff --name-only -z --diff-filter=ACMR "$branch_base...HEAD")
     ;;
 esac
 
