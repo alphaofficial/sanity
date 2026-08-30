@@ -12,7 +12,8 @@
   ],
   "scripts": {
     "lint": "node src/run-eslint.js --self-test",
-    "check": "node --check src/run-eslint.js"
+    "check": "node --check src/run-eslint.js",
+    "test": "node --test --test-reporter=spec 'tests/rules/**/*.test.js'"
   },
   "dependencies": {
     "@eslint/js": "^10.0.1",

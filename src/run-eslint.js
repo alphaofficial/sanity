@@ -12,6 +12,8 @@ import { join, relative } from "node:path";
 import codeComplete from "./vendor/code-complete/index.js";
 
 const repoRoot = process.env.SANITY_REPO_ROOT || process.cwd();
+const mode = process.env.SANITY_MODE || "staged";
+const branchBase = process.env.SANITY_BRANCH_BASE || "";
 const jsonOutput = process.env.SANITY_JSON === "1";
 const colors = createColors({
   force: process.env.FORCE_COLOR !== undefined || (process.env.NO_COLOR === undefined && process.stdout.isTTY)
@@ -137,6 +139,112 @@ function parseNulPaths(buffer) {
     });
 }
 
+function parseChangedRanges(diff) {
+  const ranges = [];
+
+  for (const line of diff.split(/\r?\n/)) {
+    const match = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
+    if (!match) continue;
+
+    const start = Number(match[1]);
+    const length = match[2] === undefined ? 1 : Number(match[2]);
+    if (length > 0) {
+      ranges.push([start, start + length - 1]);
+    }
+  }
+
+  return ranges;
+}
+
+function diffArgsForMode(file) {
+  switch (mode) {
+    case "staged":
+      return ["diff", "--cached", "--unified=0", "--no-ext-diff", "--diff-filter=ACMR", "--", file];
+    case "changed":
+      return ["diff", "--unified=0", "--no-ext-diff", "--diff-filter=ACMR", "--", file];
+    case "branch":
+      if (branchBase === "") {
+        return undefined;
+      }
+      return ["diff", "--unified=0", "--no-ext-diff", "--diff-filter=ACMR", `${branchBase}...HEAD`, "--", file];
+    default:
+      return undefined;
+  }
+}
+
+function changedRangesForMode(files) {
+  if (!["staged", "changed", "branch"].includes(mode)) {
+    return undefined;
+  }
+
+  const ranges = new Map();
+
+  for (const file of files) {
+    const diffArgs = diffArgsForMode(file);
+    if (!diffArgs) continue;
+
+    const result = spawnSync("git", ["-C", repoRoot, ...diffArgs], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+
+    if (result.error) {
+      throw result.error;
+    }
+
+    if (result.status !== 0) {
+      const message = result.stderr.trim() || `git diff failed for ${file}`;
+      throw new Error(message);
+    }
+
+    ranges.set(file, parseChangedRanges(result.stdout));
+  }
+
+  return ranges;
+}
+
+function messageTouchesChangedLine(message, ranges) {
+  if (!message.line) {
+    return true;
+  }
+
+  const start = message.line;
+  const end = message.endLine ?? message.line;
+  return ranges.some(([rangeStart, rangeEnd]) => start <= rangeEnd && end >= rangeStart);
+}
+
+function withFilteredCounts(result, messages) {
+  const errorCount = messages.filter(message => message.severity === 2).length;
+  const warningCount = messages.filter(message => message.severity === 1).length;
+
+  return {
+    ...result,
+    messages,
+    errorCount,
+    warningCount,
+    fatalErrorCount: messages.filter(message => message.fatal === true).length,
+    fixableErrorCount: messages.filter(message => message.severity === 2 && message.fix).length,
+    fixableWarningCount: messages.filter(message => message.severity === 1 && message.fix).length
+  };
+}
+
+function filterResultsToChangedLines(results, rangesByFile) {
+  if (!rangesByFile) {
+    return results;
+  }
+
+  return results.map(result => {
+    const relativePath = relative(repoRoot, result.filePath) || result.filePath;
+    const ranges = rangesByFile.get(relativePath);
+    if (!ranges || ranges.length === 0) {
+      return withFilteredCounts(result, []);
+    }
+
+    const messages = result.messages.filter(message => messageTouchesChangedLine(message, ranges));
+    return withFilteredCounts(result, messages);
+  });
+}
+
 function findFlatConfig() {
   for (const file of configFiles) {
     const configPath = join(repoRoot, file);
@@ -253,7 +361,8 @@ function sanityConfig(projectHasFlatConfig) {
               ecmaFeatures: {
                 jsx: true
               },
-              ecmaVersion: "latest"
+              ecmaVersion: "latest",
+              projectService: true
             }
           },
       plugins: {
@@ -422,9 +531,10 @@ async function main() {
   }
 
   const eslint = new ESLint(eslintOptions(projectConfigPath));
+  const rangesByFile = changedRangesForMode(files);
   const results = await eslint.lintFiles(files);
   const formatter = await eslint.loadFormatter("json");
-  const formattedResults = JSON.parse(await formatter.format(results));
+  const formattedResults = filterResultsToChangedLines(JSON.parse(await formatter.format(results)), rangesByFile);
 
   if (jsonOutput) {
     process.stdout.write(`${JSON.stringify(formattedResults, null, 2)}\n`);
@@ -444,3 +554,5 @@ main()
     printFatal(error);
     process.exitCode = typeof error.exitCode === "number" ? error.exitCode : 2;
   });
+
+export { sanityConfig };

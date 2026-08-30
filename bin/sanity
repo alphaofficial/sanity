@@ -8,10 +8,10 @@ Usage: sanity [--staged|--changed|--branch [base-ref]] [--json] [--clipboard] [-
 Lint JavaScript and TypeScript changes in the current Git repository.
 
 Options:
-  --staged   Lint staged files. This is the default.
-  --changed  Lint tracked files changed in the working tree.
+  --staged   Lint staged lines. This is the default.
+  --changed  Lint tracked lines changed in the working tree.
   --branch [base-ref]
-             Lint files changed on the current branch since it forked from
+             Lint lines changed on the current branch since it forked from
              base-ref. Defaults to the repository's default branch.
   --json     Print ESLint JSON formatter output.
   --clipboard
@@ -201,9 +201,9 @@ fi
 
 if [[ "$clipboard" == "1" ]]; then
   set +e
-  output="$(SANITY_REPO_ROOT="$repo_root" SANITY_MODE="$mode" SANITY_JSON="$json" node "$runner" <"$tmp_files")"
+  output="$(SANITY_REPO_ROOT="$repo_root" SANITY_MODE="$mode" SANITY_BRANCH_BASE="$branch_base" SANITY_JSON="$json" node "$runner" <"$tmp_files")"
   status=$?
-  clipboard_output="$(env -u FORCE_COLOR NO_COLOR=1 SANITY_REPO_ROOT="$repo_root" SANITY_MODE="$mode" SANITY_JSON="$json" node "$runner" <"$tmp_files")"
+  clipboard_output="$(env -u FORCE_COLOR NO_COLOR=1 SANITY_REPO_ROOT="$repo_root" SANITY_MODE="$mode" SANITY_BRANCH_BASE="$branch_base" SANITY_JSON="$json" node "$runner" <"$tmp_files")"
   set -e
 
   printf '%s\n' "$output"
@@ -213,4 +213,4 @@ if [[ "$clipboard" == "1" ]]; then
   exit "$status"
 fi
 
-SANITY_REPO_ROOT="$repo_root" SANITY_MODE="$mode" SANITY_JSON="$json" node "$runner" <"$tmp_files"
+SANITY_REPO_ROOT="$repo_root" SANITY_MODE="$mode" SANITY_BRANCH_BASE="$branch_base" SANITY_JSON="$json" node "$runner" <"$tmp_files"

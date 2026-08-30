@@ -2,7 +2,7 @@
 
 A standalone ESLint quality gate for JavaScript and TypeScript changes in any Git repository.
 
-`sanity` checks staged files by default, presents compact diagnostics grouped by file, and leaves the target repository untouched. It brings its own ESLint installation and rules while incorporating a project's modern ESLint configuration when available.
+`sanity` checks staged JavaScript and TypeScript changes by default, presents compact diagnostics grouped by file, and leaves the target repository untouched. It brings its own ESLint installation and rules while incorporating a project's modern ESLint configuration when available.
 
 ## Requirements
 
@@ -48,14 +48,14 @@ Run the command from any directory inside the Git repository you want to check:
 sanity
 ```
 
-By default, it checks files staged in the Git index. This makes it suitable for running before a commit.
+By default, it checks lines staged in the Git index. This makes it suitable for running before a commit.
 
 ### Options
 
-- `--staged` checks staged files and is the default.
-- `--changed` checks tracked files changed in the working tree but not yet staged.
-- `--branch` checks files changed on the current branch since it forked from the repository's default branch.
-- `--branch <base-ref>` checks files changed on the current branch since it forked from a specific base ref.
+- `--staged` checks staged lines and is the default.
+- `--changed` checks tracked lines changed in the working tree but not yet staged.
+- `--branch` checks lines changed on the current branch since it forked from the repository's default branch.
+- `--branch <base-ref>` checks lines changed on the current branch since it forked from a specific base ref.
 - `--json` writes ESLint's machine-readable JSON results and does not require Gum.
 - `--clipboard` copies the printed output to the system clipboard.
 - `--help` prints command help.
