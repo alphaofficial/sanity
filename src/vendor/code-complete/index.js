@@ -10,8 +10,6 @@ export default {
         'no-late-argument-usage': rules.noLateArgumentUsage,
         'no-complex-conditionals': rules.noComplexConditionals,
         'max-nesting-depth': rules.maxNestingDepth,
-        'high-parameter-coupling': rules.highParameterCoupling,
-        'high-import-coupling': rules.highImportCoupling,
         'max-function-length': rules.maxFunctionLength,
         'prefer-early-return': rules.preferEarlyReturn
     }
