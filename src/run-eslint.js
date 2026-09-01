@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import js from "@eslint/js";
-import { FlatCompat, Legacy } from "@eslint/eslintrc";
 import { ESLint } from "eslint";
 import { includeIgnoreFile } from "eslint/config";
 import importX from "eslint-plugin-import-x";
@@ -24,20 +23,6 @@ const colors = createColors({
 });
 const extensions = new Set([".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"]);
 const fallbackIgnores = ["**/node_modules/**", "**/dist/**", "**/build/**", "**/coverage/**", "**/.next/**"];
-const configFiles = [
-  "eslint.config.js",
-  "eslint.config.mjs",
-  "eslint.config.cjs",
-  "eslint.config.ts"
-];
-const legacyConfigFiles = [
-  ".eslintrc",
-  ".eslintrc.js",
-  ".eslintrc.cjs",
-  ".eslintrc.json",
-  ".eslintrc.yaml",
-  ".eslintrc.yml"
-];
 
 function gum(args, input = undefined) {
   const result = spawnSync("gum", args, {
@@ -261,28 +246,6 @@ function filterResultsToChangedLines(results, rangesByFile) {
   });
 }
 
-function findFlatConfig() {
-  for (const file of configFiles) {
-    const configPath = join(repoRoot, file);
-    if (existsSync(configPath)) {
-      return configPath;
-    }
-  }
-
-  return undefined;
-}
-
-function findLegacyConfig() {
-  for (const file of legacyConfigFiles) {
-    const configPath = join(repoRoot, file);
-    if (existsSync(configPath)) {
-      return configPath;
-    }
-  }
-
-  return undefined;
-}
-
 function normalizeRecommendedConfig(config) {
   if (!config) return [];
   return Array.isArray(config) ? config : [config];
@@ -364,7 +327,7 @@ function sanityConfig(projectHasFlatConfig) {
         "unicorn/prefer-string-starts-ends-with": "warn",
         "unicorn/prefer-string-trim-start-end": "warn",
         "unicorn/prefer-type-error": "warn"
-      }g
+      }
     },
     {
       files: ["**/*.{ts,tsx,mts,cts}"],
@@ -385,26 +348,6 @@ function sanityConfig(projectHasFlatConfig) {
       rules: typescriptRecommendedTypeCheckedRules()
     }
   ];
-}
-
-function legacyConfigOverrides(legacyConfigPath) {
-  if (!legacyConfigPath) return { configs: [], error: undefined };
-
-  const compat = new FlatCompat({
-    allConfig: js.configs.all,
-    baseDirectory: repoRoot,
-    recommendedConfig: js.configs.recommended,
-    resolvePluginsRelativeTo: repoRoot
-  });
-
-  try {
-    return {
-      configs: compat.config(Legacy.loadConfigFile(legacyConfigPath)),
-      error: undefined
-    };
-  } catch (error) {
-    return { configs: [], error };
-  }
 }
 
 function eslintIgnoreOverride() {
@@ -430,25 +373,22 @@ function createEslint(options, handlesEslintIgnore) {
   }
 }
 
-function eslintOptions(projectConfigPath, legacyConfigPath) {
-  const legacy = legacyConfigOverrides(legacyConfigPath);
-  const projectHasConfig = Boolean(projectConfigPath || legacy.configs.length > 0);
+function eslintOptions() {
   const ignoreOverride = eslintIgnoreOverride();
   const options = {
     cwd: repoRoot,
     overrideConfig: [
       ...(ignoreOverride ? [ignoreOverride] : []),
-      ...legacy.configs,
-      ...sanityConfig(projectHasConfig)
+      ...sanityConfig(false)
     ],
     errorOnUnmatchedPattern: false,
     fix: false,
     warnIgnored: false
   };
 
-  options.overrideConfigFile = projectConfigPath || true;
+  options.overrideConfigFile = true;
 
-  return { legacyConfigError: legacy.error, options };
+  return { legacyConfigError: undefined, options };
 }
 
 function printIssue(message, displayPath) {
@@ -580,10 +520,8 @@ async function main() {
     return 0;
   }
 
-  const projectConfigPath = findFlatConfig();
-  const legacyConfigPath = projectConfigPath ? undefined : findLegacyConfig();
   const handlesEslintIgnore = Boolean(eslintIgnoreOverride());
-  const { legacyConfigError, options } = eslintOptions(projectConfigPath, legacyConfigPath);
+  const { legacyConfigError, options } = eslintOptions();
 
   if (legacyConfigError && verboseOutput && !jsonOutput) {
     style("Project ESLint config skipped\n", "--foreground", "214", "--bold");
