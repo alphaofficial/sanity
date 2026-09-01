@@ -2,7 +2,7 @@
 
 A standalone ESLint quality gate for JavaScript and TypeScript changes in any Git repository.
 
-`sanity` checks staged JavaScript and TypeScript changes by default, presents compact diagnostics grouped by file, and leaves the target repository untouched. It brings its own ESLint installation and rules while incorporating a project's modern ESLint configuration when available.
+`sanity` checks staged JavaScript and TypeScript changes by default, presents compact diagnostics grouped by file, and leaves the target repository untouched. It brings its own ESLint installation and rules; project ESLint configuration files (`eslint.config.js`, `eslint.config.mjs`, `eslint.config.cjs`, `eslint.config.ts`, and legacy `.eslintrc`) are intentionally ignored.
 
 ## Requirements
 
@@ -92,9 +92,14 @@ File discovery uses NUL-delimited Git output, so filenames containing spaces and
 
 ## ESLint Configuration
 
-When a project contains `eslint.config.js`, `eslint.config.mjs`, `eslint.config.cjs`, or `eslint.config.ts`, `sanity` loads it and then adds its own rules. The sanity rules take precedence when both configurations define the same rule.
+`sanity` is the only ESLint configuration that runs against the target repository. Any `eslint.config.js`, `eslint.config.mjs`, `eslint.config.cjs`, or `eslint.config.ts` in the target repository is intentionally ignored, as is any legacy `.eslintrc`. `sanity` ships its own bundled configuration and does not load, extend, or merge project configs.
 
-Project flat-config ignore rules are respected. If no flat config exists, these common generated directories are ignored:
+What `sanity` reads from the target repository:
+
+- `.eslintignore` patterns, imported via ESLint's `includeIgnoreFile`.
+- A discoverable `tsconfig.json` for TypeScript files, used by typescript-eslint's project service.
+
+If no `.eslintignore` exists, these common generated directories are ignored:
 
 - `node_modules`
 - `dist`
@@ -102,13 +107,16 @@ Project flat-config ignore rules are respected. If no flat config exists, these 
 - `coverage`
 - `.next`
 
-Legacy `.eslintrc` files are translated to flat configuration and merged before the standalone rules. `.eslintignore` patterns are likewise imported and respected.
+The bundled sanity configuration combines:
 
-TypeScript checks are type-aware. TypeScript files must be included by a `tsconfig.json` discoverable from the target repository; `sanity` uses typescript-eslint's project service to load the appropriate TypeScript project and runs its recommended type-checked rules.
+- `@eslint/js` recommended
+- `typescript-eslint` recommended type-checked (enabled via project service)
+- `eslint-plugin-sonarjs` recommended
+- `eslint-plugin-import-x` for import order and duplicates
+- A curated subset of `eslint-plugin-unicorn` (correctness and modernisation rules only)
+- `sanity-code-complete`, a small in-tree plugin
 
-## Built-in Checks
-
-The standalone configuration combines recommended ESLint, type-checked typescript-eslint, and SonarJS checks with focused maintainability rules, including:
+Maintainability limits applied on top:
 
 - Cyclomatic complexity: 10
 - Cognitive complexity: 15
@@ -117,9 +125,10 @@ The standalone configuration combines recommended ESLint, type-checked typescrip
 - Maximum function parameters: 4
 - Duplicate and misplaced imports
 - Nested ternaries and unnecessary `else` blocks
-- Selected Unicorn correctness and modernisation rules
 
-It avoids formatting rules better handled by tools such as Prettier.
+Formatting rules better handled by tools such as Prettier are intentionally excluded.
+
+TypeScript checks are type-aware. TypeScript files must be included by a `tsconfig.json` discoverable from the target repository; `sanity` uses typescript-eslint's project service to load the appropriate TypeScript project and runs its recommended type-checked rules.
 
 ## Repository Safety
 

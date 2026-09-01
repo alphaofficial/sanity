@@ -1,8 +1,7 @@
 // RuleTester-based unit tests for the standalone core rules whose sanity
-// config supplies non-default options. The integration tests in
-// tests/rules/standalone.test.js only assert "this rule fires"; these tests
-// also pin down the threshold behaviour and option overrides, so a regression
-// in the rule itself (or in how sanityConfig() wires it) fails here first.
+// config supplies non-default options. These tests pin down the threshold
+// behaviour and option overrides, so a regression in the rule itself (or in
+// how sanityConfig() wires it) fails here first.
 import { describeRuleTester } from "../../helpers/ruleTester.js";
 
 describeRuleTester(

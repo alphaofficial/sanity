@@ -145,51 +145,73 @@ function parseChangedRanges(diff) {
   return ranges;
 }
 
-function diffArgsForMode(file) {
+function diffArgsForBatch() {
   switch (mode) {
     case "staged":
-      return ["diff", "--cached", "--unified=0", "--no-ext-diff", "--diff-filter=ACMR", "--", file];
+      return ["diff", "--cached", "--unified=0", "--no-ext-diff", "--diff-filter=ACMR"];
     case "changed":
-      return ["diff", "--unified=0", "--no-ext-diff", "--diff-filter=ACMR", "--", file];
+      return ["diff", "--unified=0", "--no-ext-diff", "--diff-filter=ACMR"];
     case "branch":
       if (branchBase === "") {
         return undefined;
       }
-      return ["diff", "--unified=0", "--no-ext-diff", "--diff-filter=ACMR", `${branchBase}...HEAD`, "--", file];
+      return ["diff", "--unified=0", "--no-ext-diff", "--diff-filter=ACMR", `${branchBase}...HEAD`];
     default:
       return undefined;
   }
 }
 
+function parseMultiFileDiff(diff) {
+  const ranges = new Map();
+  // `git diff` separates files with `diff --git a/<src> b/<dst>`. For renames
+  // the destination path is what callers need, so prefer `b/`.
+  const sections = diff.split(/^diff --git /m);
+
+  for (const section of sections) {
+    if (section.length === 0) continue;
+
+    const headerMatch = /^a\/.+ b\/(.+)$/m.exec(section);
+    if (!headerMatch) continue;
+
+    const fileRanges = parseChangedRanges(section);
+    if (fileRanges.length > 0) {
+      ranges.set(headerMatch[1], fileRanges);
+    }
+  }
+
+  return ranges;
+}
+
 function changedRangesForMode(files) {
+  // The test runner passes `SANITY_MODE="all"` to skip range filtering and
+  // lint every input file as-is. The Bash CLI only ever sets
+  // staged|changed|branch, so this stays an undocumented internal sentinel.
   if (!["staged", "changed", "branch"].includes(mode)) {
     return undefined;
   }
 
-  const ranges = new Map();
-
-  for (const file of files) {
-    const diffArgs = diffArgsForMode(file);
-    if (!diffArgs) continue;
-
-    const result = spawnSync("git", ["-C", repoRoot, ...diffArgs], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"]
-    });
-
-    if (result.error) {
-      throw result.error;
-    }
-
-    if (result.status !== 0) {
-      const message = result.stderr.trim() || `git diff failed for ${file}`;
-      throw new Error(message);
-    }
-
-    ranges.set(file, parseChangedRanges(result.stdout));
+  if (files.length === 0) {
+    return new Map();
   }
 
-  return ranges;
+  const diffArgs = diffArgsForBatch();
+  if (!diffArgs) return undefined;
+
+  const result = spawnSync("git", ["-C", repoRoot, ...diffArgs, "--", ...files], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+
+  if (result.error) {
+    throw result.error;
+  }
+
+  if (result.status !== 0) {
+    const message = result.stderr.trim() || "git diff failed";
+    throw new Error(message);
+  }
+
+  return parseMultiFileDiff(result.stdout);
 }
 
 function messageTouchesChangedLine(message, ranges) {
@@ -388,7 +410,7 @@ function eslintOptions() {
 
   options.overrideConfigFile = true;
 
-  return { legacyConfigError: undefined, options };
+  return options;
 }
 
 function printIssue(message, displayPath) {
@@ -521,16 +543,7 @@ async function main() {
   }
 
   const handlesEslintIgnore = Boolean(eslintIgnoreOverride());
-  const { legacyConfigError, options } = eslintOptions();
-
-  if (legacyConfigError && verboseOutput && !jsonOutput) {
-    style("Project ESLint config skipped\n", "--foreground", "214", "--bold");
-    style(
-      `${legacyConfigError.message}\nSanity will continue with its built-in checks. Install the project's ESLint dependencies to enable its legacy config.\n\n`,
-      "--foreground",
-      "252"
-    );
-  }
+  const options = eslintOptions();
 
   const eslint = createEslint(options, handlesEslintIgnore);
   const rangesByFile = changedRangesForMode(files);
