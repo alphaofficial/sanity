@@ -9,8 +9,6 @@ export default {
         'enforce-meaningful-names': rules.enforceMeaningfulNames,
         'no-late-argument-usage': rules.noLateArgumentUsage,
         'no-complex-conditionals': rules.noComplexConditionals,
-        'max-nesting-depth': rules.maxNestingDepth,
-        'max-function-length': rules.maxFunctionLength,
         'prefer-early-return': rules.preferEarlyReturn
     }
 };

@@ -137,14 +137,16 @@ script_dir="$(cd -P -- "$(dirname -- "$source_path")" && pwd)"
 runner="$script_dir/../src/run-eslint.js"
 
 detect_default_branch() {
-  local remote_head candidate
+  local remote remote_head candidate
 
-  if remote_head="$(git -C "$repo_root" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)"; then
-    printf '%s\n' "$remote_head"
-    return 0
-  fi
+  for remote in $(git -C "$repo_root" remote 2>/dev/null); do
+    if remote_head="$(git -C "$repo_root" symbolic-ref --quiet --short "refs/remotes/$remote/HEAD" 2>/dev/null)"; then
+      printf '%s\n' "$remote_head"
+      return 0
+    fi
+  done
 
-  for candidate in origin/main origin/master main master; do
+  for candidate in main master develop trunk; do
     if git -C "$repo_root" rev-parse --verify --quiet "$candidate^{commit}" >/dev/null; then
       printf '%s\n' "$candidate"
       return 0

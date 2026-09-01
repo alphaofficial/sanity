@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import js from "@eslint/js";
-import { FlatCompat, Legacy } from "@eslint/eslintrc";
 import { ESLint } from "eslint";
 import { includeIgnoreFile } from "eslint/config";
 import importX from "eslint-plugin-import-x";
@@ -24,20 +23,6 @@ const colors = createColors({
 });
 const extensions = new Set([".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"]);
 const fallbackIgnores = ["**/node_modules/**", "**/dist/**", "**/build/**", "**/coverage/**", "**/.next/**"];
-const configFiles = [
-  "eslint.config.js",
-  "eslint.config.mjs",
-  "eslint.config.cjs",
-  "eslint.config.ts"
-];
-const legacyConfigFiles = [
-  ".eslintrc",
-  ".eslintrc.js",
-  ".eslintrc.cjs",
-  ".eslintrc.json",
-  ".eslintrc.yaml",
-  ".eslintrc.yml"
-];
 
 function gum(args, input = undefined) {
   const result = spawnSync("gum", args, {
@@ -160,51 +145,73 @@ function parseChangedRanges(diff) {
   return ranges;
 }
 
-function diffArgsForMode(file) {
+function diffArgsForBatch() {
   switch (mode) {
     case "staged":
-      return ["diff", "--cached", "--unified=0", "--no-ext-diff", "--diff-filter=ACMR", "--", file];
+      return ["diff", "--cached", "--unified=0", "--no-ext-diff", "--diff-filter=ACMR"];
     case "changed":
-      return ["diff", "--unified=0", "--no-ext-diff", "--diff-filter=ACMR", "--", file];
+      return ["diff", "--unified=0", "--no-ext-diff", "--diff-filter=ACMR"];
     case "branch":
       if (branchBase === "") {
         return undefined;
       }
-      return ["diff", "--unified=0", "--no-ext-diff", "--diff-filter=ACMR", `${branchBase}...HEAD`, "--", file];
+      return ["diff", "--unified=0", "--no-ext-diff", "--diff-filter=ACMR", `${branchBase}...HEAD`];
     default:
       return undefined;
   }
 }
 
+function parseMultiFileDiff(diff) {
+  const ranges = new Map();
+  // `git diff` separates files with `diff --git a/<src> b/<dst>`. For renames
+  // the destination path is what callers need, so prefer `b/`.
+  const sections = diff.split(/^diff --git /m);
+
+  for (const section of sections) {
+    if (section.length === 0) continue;
+
+    const headerMatch = /^a\/.+ b\/(.+)$/m.exec(section);
+    if (!headerMatch) continue;
+
+    const fileRanges = parseChangedRanges(section);
+    if (fileRanges.length > 0) {
+      ranges.set(headerMatch[1], fileRanges);
+    }
+  }
+
+  return ranges;
+}
+
 function changedRangesForMode(files) {
+  // The test runner passes `SANITY_MODE="all"` to skip range filtering and
+  // lint every input file as-is. The Bash CLI only ever sets
+  // staged|changed|branch, so this stays an undocumented internal sentinel.
   if (!["staged", "changed", "branch"].includes(mode)) {
     return undefined;
   }
 
-  const ranges = new Map();
-
-  for (const file of files) {
-    const diffArgs = diffArgsForMode(file);
-    if (!diffArgs) continue;
-
-    const result = spawnSync("git", ["-C", repoRoot, ...diffArgs], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"]
-    });
-
-    if (result.error) {
-      throw result.error;
-    }
-
-    if (result.status !== 0) {
-      const message = result.stderr.trim() || `git diff failed for ${file}`;
-      throw new Error(message);
-    }
-
-    ranges.set(file, parseChangedRanges(result.stdout));
+  if (files.length === 0) {
+    return new Map();
   }
 
-  return ranges;
+  const diffArgs = diffArgsForBatch();
+  if (!diffArgs) return undefined;
+
+  const result = spawnSync("git", ["-C", repoRoot, ...diffArgs, "--", ...files], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+
+  if (result.error) {
+    throw result.error;
+  }
+
+  if (result.status !== 0) {
+    const message = result.stderr.trim() || "git diff failed";
+    throw new Error(message);
+  }
+
+  return parseMultiFileDiff(result.stdout);
 }
 
 function messageTouchesChangedLine(message, ranges) {
@@ -259,28 +266,6 @@ function filterResultsToChangedLines(results, rangesByFile) {
     const messages = result.messages.filter(message => messageTouchesChangedLine(message, ranges));
     return withFilteredCounts(result, messages);
   });
-}
-
-function findFlatConfig() {
-  for (const file of configFiles) {
-    const configPath = join(repoRoot, file);
-    if (existsSync(configPath)) {
-      return configPath;
-    }
-  }
-
-  return undefined;
-}
-
-function findLegacyConfig() {
-  for (const file of legacyConfigFiles) {
-    const configPath = join(repoRoot, file);
-    if (existsSync(configPath)) {
-      return configPath;
-    }
-  }
-
-  return undefined;
 }
 
 function normalizeRecommendedConfig(config) {
@@ -364,7 +349,7 @@ function sanityConfig(projectHasFlatConfig) {
         "unicorn/prefer-string-starts-ends-with": "warn",
         "unicorn/prefer-string-trim-start-end": "warn",
         "unicorn/prefer-type-error": "warn"
-      }g
+      }
     },
     {
       files: ["**/*.{ts,tsx,mts,cts}"],
@@ -385,26 +370,6 @@ function sanityConfig(projectHasFlatConfig) {
       rules: typescriptRecommendedTypeCheckedRules()
     }
   ];
-}
-
-function legacyConfigOverrides(legacyConfigPath) {
-  if (!legacyConfigPath) return { configs: [], error: undefined };
-
-  const compat = new FlatCompat({
-    allConfig: js.configs.all,
-    baseDirectory: repoRoot,
-    recommendedConfig: js.configs.recommended,
-    resolvePluginsRelativeTo: repoRoot
-  });
-
-  try {
-    return {
-      configs: compat.config(Legacy.loadConfigFile(legacyConfigPath)),
-      error: undefined
-    };
-  } catch (error) {
-    return { configs: [], error };
-  }
 }
 
 function eslintIgnoreOverride() {
@@ -430,25 +395,22 @@ function createEslint(options, handlesEslintIgnore) {
   }
 }
 
-function eslintOptions(projectConfigPath, legacyConfigPath) {
-  const legacy = legacyConfigOverrides(legacyConfigPath);
-  const projectHasConfig = Boolean(projectConfigPath || legacy.configs.length > 0);
+function eslintOptions() {
   const ignoreOverride = eslintIgnoreOverride();
   const options = {
     cwd: repoRoot,
     overrideConfig: [
       ...(ignoreOverride ? [ignoreOverride] : []),
-      ...legacy.configs,
-      ...sanityConfig(projectHasConfig)
+      ...sanityConfig(false)
     ],
     errorOnUnmatchedPattern: false,
     fix: false,
     warnIgnored: false
   };
 
-  options.overrideConfigFile = projectConfigPath || true;
+  options.overrideConfigFile = true;
 
-  return { legacyConfigError: legacy.error, options };
+  return options;
 }
 
 function printIssue(message, displayPath) {
@@ -580,19 +542,8 @@ async function main() {
     return 0;
   }
 
-  const projectConfigPath = findFlatConfig();
-  const legacyConfigPath = projectConfigPath ? undefined : findLegacyConfig();
   const handlesEslintIgnore = Boolean(eslintIgnoreOverride());
-  const { legacyConfigError, options } = eslintOptions(projectConfigPath, legacyConfigPath);
-
-  if (legacyConfigError && verboseOutput && !jsonOutput) {
-    style("Project ESLint config skipped\n", "--foreground", "214", "--bold");
-    style(
-      `${legacyConfigError.message}\nSanity will continue with its built-in checks. Install the project's ESLint dependencies to enable its legacy config.\n\n`,
-      "--foreground",
-      "252"
-    );
-  }
+  const options = eslintOptions();
 
   const eslint = createEslint(options, handlesEslintIgnore);
   const rangesByFile = changedRangesForMode(files);
