@@ -9,7 +9,7 @@ import { sanityConfig } from "../../../src/run-eslint.js";
 
 function typescriptConfig(projectHasFlatConfig) {
   return sanityConfig(projectHasFlatConfig).find(config =>
-    config.files?.includes("**/*.{ts,tsx,mts,cts}")
+    config.files?.includes("**/*.{ts,tsx,mts,cts}") && config.languageOptions?.parser
   );
 }
 
@@ -32,6 +32,24 @@ test("runs rules that require TypeScript type information", async () => {
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("uses the curated Unicorn rules instead of its recommended preset", () => {
+  const config = sanityConfig(false);
+  const customConfig = config.find(candidate => candidate.rules?.["unicorn/prefer-includes"]);
+
+  assert.ok(customConfig);
+  assert.equal(customConfig.rules["unicorn/prefer-includes"], "warn");
+  assert.equal(customConfig.rules["unicorn/filename-case"], undefined);
+  assert.ok(!config.some(candidate => candidate.name === "unicorn/recommended"));
+});
+
+test("includes SonarJS's complete recommended preset", () => {
+  const config = sanityConfig(false).find(candidate => candidate.name === "sonarjs/recommended");
+
+  assert.ok(config);
+  assert.equal(config.rules["sonarjs/different-types-comparison"], "error");
+  assert.equal(config.rules["sonarjs/cognitive-complexity"], "error");
 });
 
 for (const projectHasFlatConfig of [false, true]) {

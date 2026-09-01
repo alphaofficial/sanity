@@ -288,15 +288,6 @@ function normalizeRecommendedConfig(config) {
   return Array.isArray(config) ? config : [config];
 }
 
-function sonarRecommendedRules() {
-  const recommended = sonarjs.configs?.recommended;
-  if (!recommended) return {};
-  if (Array.isArray(recommended)) {
-    return Object.assign({}, ...recommended.map(config => config.rules || {}));
-  }
-  return recommended.rules || {};
-}
-
 function typescriptRecommendedTypeCheckedRules() {
   return Object.assign(
     {},
@@ -319,17 +310,16 @@ function sanityConfig(projectHasFlatConfig) {
   return [
     ...(projectHasFlatConfig ? [] : [{ ignores: fallbackIgnores }]),
     js.configs.recommended,
+    sonarjs.configs.recommended,
     {
       files: ["**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}"],
       languageOptions: baseLanguageOptions,
       plugins: {
         "import-x": importX,
         "sanity-code-complete": codeComplete,
-        sonarjs,
         unicorn
       },
       rules: {
-        ...sonarRecommendedRules(),
         complexity: ["warn", { max: 10 }],
         "max-depth": ["warn", 3],
         "max-lines-per-function": [
@@ -374,7 +364,7 @@ function sanityConfig(projectHasFlatConfig) {
         "unicorn/prefer-string-starts-ends-with": "warn",
         "unicorn/prefer-string-trim-start-end": "warn",
         "unicorn/prefer-type-error": "warn"
-      }
+      }g
     },
     {
       files: ["**/*.{ts,tsx,mts,cts}"],
