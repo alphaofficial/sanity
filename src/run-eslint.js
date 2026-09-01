@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import js from "@eslint/js";
+import { FlatCompat, Legacy } from "@eslint/eslintrc";
 import { ESLint } from "eslint";
+import { includeIgnoreFile } from "eslint/config";
 import importX from "eslint-plugin-import-x";
 import sonarjs from "eslint-plugin-sonarjs";
 import unicorn from "eslint-plugin-unicorn";
@@ -9,12 +11,14 @@ import tseslint from "typescript-eslint";
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join, relative } from "node:path";
+import { pathToFileURL } from "node:url";
 import codeComplete from "./vendor/code-complete/index.js";
 
 const repoRoot = process.env.SANITY_REPO_ROOT || process.cwd();
 const mode = process.env.SANITY_MODE || "staged";
 const branchBase = process.env.SANITY_BRANCH_BASE || "";
 const jsonOutput = process.env.SANITY_JSON === "1";
+const verboseOutput = process.env.SANITY_VERBOSE === "1";
 const colors = createColors({
   force: process.env.FORCE_COLOR !== undefined || (process.env.NO_COLOR === undefined && process.stdout.isTTY)
 });
@@ -228,12 +232,24 @@ function withFilteredCounts(result, messages) {
   };
 }
 
+function isVerboseOnlyMessage(message) {
+  return message.fatal === true &&
+    message.ruleId === null &&
+    message.message.includes("was not found by the project service");
+}
+
 function filterResultsToChangedLines(results, rangesByFile) {
+  const visibleResults = verboseOutput
+    ? results
+    : results.map(result =>
+        withFilteredCounts(result, result.messages.filter(message => !isVerboseOnlyMessage(message)))
+      );
+
   if (!rangesByFile) {
-    return results;
+    return visibleResults;
   }
 
-  return results.map(result => {
+  return visibleResults.map(result => {
     const relativePath = relative(repoRoot, result.filePath) || result.filePath;
     const ranges = rangesByFile.get(relativePath);
     if (!ranges || ranges.length === 0) {
@@ -256,8 +272,15 @@ function findFlatConfig() {
   return undefined;
 }
 
-function hasLegacyConfig() {
-  return legacyConfigFiles.some(file => existsSync(join(repoRoot, file)));
+function findLegacyConfig() {
+  for (const file of legacyConfigFiles) {
+    const configPath = join(repoRoot, file);
+    if (existsSync(configPath)) {
+      return configPath;
+    }
+  }
+
+  return undefined;
 }
 
 function normalizeRecommendedConfig(config) {
@@ -265,17 +288,11 @@ function normalizeRecommendedConfig(config) {
   return Array.isArray(config) ? config : [config];
 }
 
-function sonarRecommendedRules() {
-  const recommended = sonarjs.configs?.recommended;
-  if (!recommended) return {};
-  if (Array.isArray(recommended)) {
-    return Object.assign({}, ...recommended.map(config => config.rules || {}));
-  }
-  return recommended.rules || {};
-}
-
-function typescriptRecommendedRules() {
-  return Object.assign({}, ...normalizeRecommendedConfig(tseslint.configs.recommended).map(config => config.rules || {}));
+function typescriptRecommendedTypeCheckedRules() {
+  return Object.assign(
+    {},
+    ...normalizeRecommendedConfig(tseslint.configs.recommendedTypeChecked).map(config => config.rules || {})
+  );
 }
 
 function sanityConfig(projectHasFlatConfig) {
@@ -293,17 +310,16 @@ function sanityConfig(projectHasFlatConfig) {
   return [
     ...(projectHasFlatConfig ? [] : [{ ignores: fallbackIgnores }]),
     js.configs.recommended,
+    sonarjs.configs.recommended,
     {
       files: ["**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}"],
       languageOptions: baseLanguageOptions,
       plugins: {
         "import-x": importX,
         "sanity-code-complete": codeComplete,
-        sonarjs,
         unicorn
       },
       rules: {
-        ...sonarRecommendedRules(),
         complexity: ["warn", { max: 10 }],
         "max-depth": ["warn", 3],
         "max-lines-per-function": [
@@ -320,7 +336,6 @@ function sanityConfig(projectHasFlatConfig) {
         "import-x/first": "warn",
         "import-x/no-duplicates": "warn",
         "sanity-code-complete/enforce-meaningful-names": "warn",
-        "sanity-code-complete/high-import-coupling": "warn",
         "sanity-code-complete/no-boolean-params": "warn",
         "sanity-code-complete/no-complex-conditionals": "warn",
         "sanity-code-complete/no-late-argument-usage": "warn",
@@ -349,35 +364,83 @@ function sanityConfig(projectHasFlatConfig) {
         "unicorn/prefer-string-starts-ends-with": "warn",
         "unicorn/prefer-string-trim-start-end": "warn",
         "unicorn/prefer-type-error": "warn"
-      }
+      }g
     },
     {
       files: ["**/*.{ts,tsx,mts,cts}"],
-      languageOptions: projectHasFlatConfig
-        ? {}
-        : {
-            parser: tseslint.parser,
-            parserOptions: {
-              ecmaFeatures: {
-                jsx: true
-              },
-              ecmaVersion: "latest",
-              projectService: true
-            }
+      languageOptions: {
+        parser: tseslint.parser,
+        parserOptions: {
+          ecmaFeatures: {
+            jsx: true
           },
+          ecmaVersion: "latest",
+          projectService: true,
+          tsconfigRootDir: repoRoot
+        }
+      },
       plugins: {
         "@typescript-eslint": tseslint.plugin
       },
-      rules: typescriptRecommendedRules()
+      rules: typescriptRecommendedTypeCheckedRules()
     }
   ];
 }
 
-function eslintOptions(projectConfigPath) {
-  const projectHasFlatConfig = Boolean(projectConfigPath);
+function legacyConfigOverrides(legacyConfigPath) {
+  if (!legacyConfigPath) return { configs: [], error: undefined };
+
+  const compat = new FlatCompat({
+    allConfig: js.configs.all,
+    baseDirectory: repoRoot,
+    recommendedConfig: js.configs.recommended,
+    resolvePluginsRelativeTo: repoRoot
+  });
+
+  try {
+    return {
+      configs: compat.config(Legacy.loadConfigFile(legacyConfigPath)),
+      error: undefined
+    };
+  } catch (error) {
+    return { configs: [], error };
+  }
+}
+
+function eslintIgnoreOverride() {
+  const ignorePath = join(repoRoot, ".eslintignore");
+  return existsSync(ignorePath) ? includeIgnoreFile(ignorePath, "Imported .eslintignore patterns") : undefined;
+}
+
+function createEslint(options, handlesEslintIgnore) {
+  if (!handlesEslintIgnore) return new ESLint(options);
+
+  const originalEmitWarning = process.emitWarning;
+  process.emitWarning = function emitWarning(warning, ...args) {
+    const warningType = typeof args[0] === "string" ? args[0] : args[0]?.type;
+    if (warningType !== "ESLintIgnoreWarning") {
+      return originalEmitWarning.call(process, warning, ...args);
+    }
+  };
+
+  try {
+    return new ESLint(options);
+  } finally {
+    process.emitWarning = originalEmitWarning;
+  }
+}
+
+function eslintOptions(projectConfigPath, legacyConfigPath) {
+  const legacy = legacyConfigOverrides(legacyConfigPath);
+  const projectHasConfig = Boolean(projectConfigPath || legacy.configs.length > 0);
+  const ignoreOverride = eslintIgnoreOverride();
   const options = {
     cwd: repoRoot,
-    overrideConfig: sanityConfig(projectHasFlatConfig),
+    overrideConfig: [
+      ...(ignoreOverride ? [ignoreOverride] : []),
+      ...legacy.configs,
+      ...sanityConfig(projectHasConfig)
+    ],
     errorOnUnmatchedPattern: false,
     fix: false,
     warnIgnored: false
@@ -385,7 +448,7 @@ function eslintOptions(projectConfigPath) {
 
   options.overrideConfigFile = projectConfigPath || true;
 
-  return options;
+  return { legacyConfigError: legacy.error, options };
 }
 
 function printIssue(message, displayPath) {
@@ -518,19 +581,20 @@ async function main() {
   }
 
   const projectConfigPath = findFlatConfig();
-  const projectHasFlatConfig = Boolean(projectConfigPath);
-  if (!projectHasFlatConfig && hasLegacyConfig()) {
-    if (!jsonOutput) {
-      style("Legacy ESLint config detected\n", "--foreground", "214", "--bold");
-      style(
-        "This project uses eslintrc configuration. ESLint flat config compatibility is not enabled here, so sanity will run its standalone checks only.\n\n",
-        "--foreground",
-        "252"
-      );
-    }
+  const legacyConfigPath = projectConfigPath ? undefined : findLegacyConfig();
+  const handlesEslintIgnore = Boolean(eslintIgnoreOverride());
+  const { legacyConfigError, options } = eslintOptions(projectConfigPath, legacyConfigPath);
+
+  if (legacyConfigError && verboseOutput && !jsonOutput) {
+    style("Project ESLint config skipped\n", "--foreground", "214", "--bold");
+    style(
+      `${legacyConfigError.message}\nSanity will continue with its built-in checks. Install the project's ESLint dependencies to enable its legacy config.\n\n`,
+      "--foreground",
+      "252"
+    );
   }
 
-  const eslint = new ESLint(eslintOptions(projectConfigPath));
+  const eslint = createEslint(options, handlesEslintIgnore);
   const rangesByFile = changedRangesForMode(files);
   const results = await eslint.lintFiles(files);
   const formatter = await eslint.loadFormatter("json");
@@ -546,13 +610,15 @@ async function main() {
   return formattedResults.some(result => result.errorCount > 0) ? 1 : 0;
 }
 
-main()
-  .then(code => {
-    process.exitCode = code;
-  })
-  .catch(error => {
-    printFatal(error);
-    process.exitCode = typeof error.exitCode === "number" ? error.exitCode : 2;
-  });
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main()
+    .then(code => {
+      process.exitCode = code;
+    })
+    .catch(error => {
+      printFatal(error);
+      process.exitCode = typeof error.exitCode === "number" ? error.exitCode : 2;
+    });
+}
 
 export { sanityConfig };

@@ -3,7 +3,5 @@ export { default as enforceMeaningfulNames } from './enforce-meaningful-names.js
 export { default as noLateArgumentUsage } from './no-late-argument-usage.js';
 export { default as noComplexConditionals } from './no-complex-conditionals.js';
 export { default as maxNestingDepth } from './max-nesting-depth.js';
-export { default as highParameterCoupling } from './high-parameter-coupling.js';
-export { default as highImportCoupling } from './high-import-coupling.js';
 export { default as maxFunctionLength } from './max-function-length.js';
 export { default as preferEarlyReturn } from './prefer-early-return.js';

@@ -128,31 +128,6 @@ describeRuleTester(
           errors: [{ messageId: "preferEarlyReturn" }]
         }
       ]
-    },
-
-    "sanity-code-complete/high-import-coupling": {
-      valid: [
-        "import { join } from 'node:path';\nexport const x = join;"
-      ],
-      invalid: [
-        {
-          code: [
-            "import { basename } from 'node:path';",
-            "import { createHash } from 'node:crypto';",
-            "import { cwd } from 'node:process';",
-            "import { EventEmitter } from 'node:events';",
-            "import { format } from 'node:util';",
-            "import { homedir } from 'node:os';",
-            "import { readFile } from 'node:fs/promises';",
-            "import { Readable } from 'node:stream';",
-            "import { setTimeout as delay } from 'node:timers/promises';",
-            "import { URL } from 'node:url';",
-            "import { Worker } from 'node:worker_threads';",
-            "export const imports = { basename, createHash, cwd, EventEmitter, format, homedir, readFile, Readable, delay, URL, Worker };"
-          ].join("\n"),
-          errors: [{ messageId: "tooManyImports" }]
-        }
-      ]
     }
   },
   { plugins: { "sanity-code-complete": codeComplete } }

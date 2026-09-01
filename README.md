@@ -57,6 +57,7 @@ By default, it checks lines staged in the Git index. This makes it suitable for 
 - `--branch` checks lines changed on the current branch since it forked from the repository's default branch.
 - `--branch <base-ref>` checks lines changed on the current branch since it forked from a specific base ref.
 - `--json` writes ESLint's machine-readable JSON results and does not require Gum.
+- `--verbose` shows additional diagnostics hidden by default.
 - `--clipboard` copies the printed output to the system clipboard.
 - `--help` prints command help.
 
@@ -69,6 +70,7 @@ sanity --branch main
 sanity --json
 sanity --changed --json
 sanity --branch --json
+sanity --branch --verbose
 sanity --clipboard
 sanity --json --clipboard
 ```
@@ -100,13 +102,13 @@ Project flat-config ignore rules are respected. If no flat config exists, these 
 - `coverage`
 - `.next`
 
-Legacy `.eslintrc` files are detected but cannot be merged into the flat configuration. A warning is shown and the standalone rules are used instead.
+Legacy `.eslintrc` files are translated to flat configuration and merged before the standalone rules. `.eslintignore` patterns are likewise imported and respected.
 
-TypeScript syntax is supported without requiring a `tsconfig.json`. Type-aware linting is intentionally not enabled, so rules that require TypeScript type information are not included.
+TypeScript checks are type-aware. TypeScript files must be included by a `tsconfig.json` discoverable from the target repository; `sanity` uses typescript-eslint's project service to load the appropriate TypeScript project and runs its recommended type-checked rules.
 
 ## Built-in Checks
 
-The standalone configuration combines recommended ESLint, typescript-eslint, and SonarJS checks with focused maintainability rules, including:
+The standalone configuration combines recommended ESLint, type-checked typescript-eslint, and SonarJS checks with focused maintainability rules, including:
 
 - Cyclomatic complexity: 10
 - Cognitive complexity: 15
